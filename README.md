@@ -1,6 +1,6 @@
 # Requirements
 1. node v14.11.0
-2. cordova 10.0.0
+2. cordova 10.0.0 `npm install -g cordova`
 
 # Setup
 

@@ -1,0 +1,228 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+    <title>
+        Twilio Video Room
+    </title>
+    <meta name="viewport"
+          content="viewport-fit=cover, width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self' data: gap: wss://* https://* 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; media-src *">
+    <script src="cordova.js"></script>
+</head>
+<body>
+<br><br><br>
+<div id="local-media" style="border: red 1px solid;"></div>
+<div id="remote-media"></div>
+<button onclick="toggleVideo()">Toggle video</button>
+<button onclick="leaveMeeting()">Leave meeting</button>
+<button onclick="startMeeting()">Start meeting</button>
+<button onclick="switchCamera()">Switch camera</button>
+<script type="text/javascript">
+
+const token = '';
+const roomName = 'test';
+const scriptUrls = [];
+let videoTrack = null;
+let audioTrack = null;
+let room = null;
+let facing = true;
+
+function loadScript(scriptUrl) {
+
+  if (scriptUrls[scriptUrl]) {
+    return Promise.resolve(scriptUrl);
+  }
+
+  return new Promise(function (resolve, reject) {
+    // load adapter.js
+    var script = document.createElement("script");
+    script.type = "text/javascript";
+    script.src = scriptUrl;
+    script.async = false;
+    document.getElementsByTagName("head")[0].appendChild(script);
+    script.onload = function () {
+      scriptUrls[scriptUrl] = true;
+      console.debug('loadScript.loaded', script.src);
+      resolve(scriptUrl);
+    };
+  });
+}
+
+async function startMeeting() {
+
+  videoTrack = await getVideoTrack();
+  audioTrack = await Twilio.Video.createLocalAudioTrack();
+  const localMediaContainer = document.getElementById('local-media');
+  localMediaContainer.appendChild(videoTrack.attach());
+  localMediaContainer.appendChild(audioTrack.attach());
+  console.log(videoTrack, audioTrack);
+
+  Twilio.Video.connect(token, {
+    tracks: [videoTrack, audioTrack],
+    // logLevel: 'debug',
+    name: roomName,
+    sdpSemantics: 'plan-b',
+    bundlePolicy: 'max-compat'
+  }).then(_room => {
+    room = _room;
+    console.log(`Successfully joined a Room: ${room}`);
+
+    // Attach the Tracks of the Room's Participants.
+    room.participants.forEach(function (participant) {
+      console.log("Already in Room: '" + participant.identity + "'");
+      participantConnected(participant);
+    });
+
+    room.on('participantConnected', participant => {
+      console.log(`A remote Participant connected: ${participant}`);
+      participantConnected(participant);
+    });
+
+    room.on('participantDisconnected', participant => {
+      console.log(`A remote Participant connected: ${participant}`);
+      participantDisconnected(participant);
+    });
+
+  }, error => {
+    console.error(`Unable to connect to Room: ${error.message}`);
+  });
+
+  function participantConnected(participant) {
+    console.log('Participant "%s" connected', participant.identity);
+    const div = document.createElement('div');
+    div.id = participant.sid;
+    participant.tracks.forEach((publication) => {
+      console.log('subbing to existing publication', publication);
+      trackSubscribed(div, publication);
+    });
+
+    participant.on('trackPublished', (publication) => {
+      trackSubscribed(div, publication)
+    });
+    participant.on('trackUnpublished', trackUnsubscribed);
+
+    participant.on('trackEnabled', (publication) => {
+      console.log('track enabled', publication);
+      attachTrack(div, publication.track);
+    });
+
+    participant.on('trackDisabled', (publication) => {
+      console.log('track disabled');
+      detachTrack(publication.track);
+    });
+
+    document.getElementById('remote-media').appendChild(div);
+  }
+
+  function participantDisconnected(participant) {
+    console.log('Participant "%s" disconnected', participant.identity);
+
+    var div = document.getElementById(participant.sid);
+    if (div) {
+      div.remove();
+    }
+  }
+
+  function trackSubscribed(div, publication) {
+    console.log('sub publication', publication);
+    if (publication.track) {
+      attachTrack(div, publication.track);
+    }
+    publication.on('subscribed', track => attachTrack(div, track));
+    publication.on('unsubscribed', track => detachTrack(track));
+  }
+
+  function attachTrack(div, track) {
+    console.log('attachTrack', track);
+    div.appendChild(track.attach());
+  }
+
+
+  function trackUnsubscribed(publication) {
+    console.log('unsub publication', publication);
+    if (publication.track) {
+      detachTrack(publication.track);
+    }
+  }
+}
+
+function detachTrack(track) {
+  console.log('detachTrack', track);
+  track.detach().forEach(element => element.remove());
+}
+
+function toggleVideo() {
+  if (videoTrack.isEnabled) {
+    videoTrack.disable();
+    room.localParticipant.unpublishTrack(videoTrack);
+  } else {
+    videoTrack.enable();
+    room.localParticipant.publishTrack(videoTrack);
+  }
+}
+
+function toggleVideoWorking() {
+  if (videoTrack.isEnabled) {
+    videoTrack.disable();
+  } else {
+    videoTrack.enable();
+  }
+}
+
+async function switchCamera() {
+  facing = !facing;
+  videoTrack.restart({ facingMode: facing ? 'user' : { exact: 'environment' } });
+}
+
+async function switchCameraWorking() {
+  facing = !facing;
+  videoTrack.restart({ facingMode: facing ? 'user' : { exact: 'environment' } });
+  setTimeout(() => {
+    videoTrack.disable();
+    room.localParticipant.unpublishTrack(videoTrack);
+    setTimeout(() => {
+      videoTrack.enable();
+      room.localParticipant.publishTrack(videoTrack);
+    }, 1000);
+  }, 1000);
+}
+
+function getVideoTrack() {
+  return Twilio.Video.createLocalVideoTrack({ facingMode: facing ? 'user' : { exact: 'environment' } });
+}
+
+function leaveMeeting() {
+  room.disconnect();
+  videoTrack.stop();
+  audioTrack.stop();
+  detachTrack(videoTrack);
+  detachTrack(audioTrack);
+}
+
+async function ready() {
+  // Note: This allow this sample to run on any Browser
+  var cordova = window.cordova;
+  if (cordova && cordova.plugins && cordova.plugins.iosrtc) {
+
+    // Expose WebRTC and GetUserMedia SHIM as Globals (Optional)
+    // Alternatively WebRTC API will be inside cordova.plugins.iosrtc namespace
+    cordova.plugins.iosrtc.registerGlobals();
+
+    // Enable iosrtc debug (Optional)
+    cordova.plugins.iosrtc.debug.enable('*', true);
+  }
+  console.log('loading Twilio');
+
+  await loadScript('https://media.twiliocdn.com/sdk/js/video/releases/2.7.2/twilio-video.js');
+  console.log('loaded');
+}
+
+if (!window.cordova) {
+  ready();
+}
+
+document.addEventListener('deviceready', ready, false);
+</script>
+</body>
+</html>
